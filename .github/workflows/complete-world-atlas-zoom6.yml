@@ -1,0 +1,103 @@
+name: Build complete OSRS world atlas pages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: Download native zoom 6 world tiles
+        run: |
+          python - <<'PY'
+          import urllib.request, os, time
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+          os.makedirs("tiles", exist_ok=True)
+          positions=[(x,y) for x in range(104) for y in range(360)]
+          def get(pos):
+              x,y=pos
+              url=f"https://raw.githubusercontent.com/JoeGandy/RSMap/main/public/tiles/0/6/{x}/{y}.png"
+              path=f"tiles/{x}_{y}.png"
+              for attempt in range(4):
+                  try:
+                      req=urllib.request.Request(url,headers={"User-Agent":"OSRS-Atlas-Builder/1.0"})
+                      with urllib.request.urlopen(req,timeout=25) as r, open(path,"wb") as f:
+                          f.write(r.read())
+                      return (x,y,True,"")
+                  except Exception as e:
+                      if attempt==3: return (x,y,False,str(e))
+                      time.sleep(1.5*(attempt+1))
+          ok=[]; failed=[]
+          with ThreadPoolExecutor(max_workers=24) as pool:
+              futures=[pool.submit(get,p) for p in positions]
+              for i,f in enumerate(as_completed(futures),1):
+                  x,y,success,error=f.result()
+                  (ok if success else failed).append((x,y,error))
+                  if i%1000==0: print(f"Completed {i}/{len(positions)}; downloaded {len(ok)}; failed {len(failed)}",flush=True)
+          print(f"Downloaded {len(ok)} of {len(positions)}")
+          if failed:
+              print("Missing tile coordinates:",failed[:100])
+              with open("missing_tiles.txt","w") as f:
+                  f.write("\n".join(f"{x},{y},{e}" for x,y,e in failed))
+          if len(ok)<len(positions)*0.995:
+              raise SystemExit("Too many missing tiles; stopping to protect atlas completeness.")
+          PY
+      - name: Cut fixed-size atlas pages at native resolution
+        run: |
+          pip install pillow reportlab
+          python - <<'PY'
+          from PIL import Image
+          from reportlab.pdfgen import canvas
+          from reportlab.lib.pagesizes import A4
+          import os, math, json, zipfile
+          os.makedirs("output/pages",exist_ok=True)
+          TILE=256; NX,NY=104,360
+          WORLD_W,WORLD_H=NX*TILE,NY*TILE
+          PAGE_W,PAGE_H=1064,1568
+          COLS=math.ceil(WORLD_W/PAGE_W); ROWS=math.ceil(WORLD_H/PAGE_H)
+          manifest={"source":"JoeGandy/RSMap OSRS cache-derived zoom 6 tiles","zoom":6,"tile_size":TILE,
+                    "world_tile_range":{"x":[0,103],"y":[0,359]},"native_world_pixels":[WORLD_W,WORLD_H],
+                    "page_pixels":[PAGE_W,PAGE_H],"columns":COLS,"rows":ROWS,"page_count":COLS*ROWS,
+                    "note":"Pages are cut without resampling; edge pages are padded."}
+          with open("output/atlas_manifest.json","w") as f: json.dump(manifest,f,indent=2)
+          pdf=canvas.Canvas("output/OSRS_full_world_A4_pages.pdf",pagesize=A4)
+          for row in range(ROWS):
+            for col in range(COLS):
+              page=Image.new("RGB",(PAGE_W,PAGE_H),(22,31,25))
+              left,top=col*PAGE_W,row*PAGE_H
+              right,bottom=left+PAGE_W,top+PAGE_H
+              tx0,tx1=left//TILE,min(NX-1,(right-1)//TILE)
+              ty0,ty1=top//TILE,min(NY-1,(bottom-1)//TILE)
+              for tx in range(tx0,tx1+1):
+                for ty in range(ty0,ty1+1):
+                  p=f"tiles/{tx}_{ty}.png"
+                  if os.path.exists(p):
+                    tile=Image.open(p).convert("RGB")
+                    x,y=tx*TILE-left,ty*TILE-top
+                    sx0,sy0=max(0,-x),max(0,-y)
+                    sx1,sy1=min(TILE,PAGE_W-x),min(TILE,PAGE_H-y)
+                    if sx1>sx0 and sy1>sy0:
+                      page.paste(tile.crop((sx0,sy0,sx1,sy1)),(max(0,x),max(0,y)))
+              code=f"{chr(65+col//26) if col>=26 else ''}{chr(65+col%26)}{row+1:02d}"
+              path=f"output/pages/{code}.png"
+              page.save(path,optimize=True)
+              pdf.drawImage(path,0,0,width=A4[0],height=A4[1])
+              pdf.showPage()
+              print(f"Created {code}.png",flush=True)
+          pdf.save()
+          with zipfile.ZipFile("output/OSRS_all_pages_PNG.zip","w",compression=zipfile.ZIP_DEFLATED,compresslevel=6) as z:
+            for fn in sorted(os.listdir("output/pages")):
+              z.write("output/pages/"+fn,arcname=fn)
+          print("GRID",COLS,"x",ROWS,"=",COLS*ROWS,"pages")
+          PY
+      - name: Upload complete atlas
+        uses: actions/upload-artifact@v4
+        with:
+          name: osrs-complete-world-atlas-zoom6
+          path: output/
+          compression-level: 0
+          retention-days: 14
