@@ -1,0 +1,109 @@
+name: Build full OSRS A4 atlas grid
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download full OSRS world map
+        run: |
+          mkdir -p tiles
+          python - <<'PY'
+          import urllib.request
+          from concurrent.futures import ThreadPoolExecutor
+
+          def download(pos):
+              x, y = pos
+              url = f"https://raw.githubusercontent.com/JoeGandy/RSMap/main/public/tiles/0/3/{x}/{y}.png"
+              try:
+                  urllib.request.urlretrieve(url, f"tiles/{x}_{y}.png")
+              except Exception:
+                  pass
+
+          positions = [(x, y) for x in range(13) for y in range(45)]
+
+          with ThreadPoolExecutor(max_workers=16) as pool:
+              list(pool.map(download, positions))
+          PY
+
+      - name: Create full map and A4 pages
+        run: |
+          pip install pillow reportlab
+          python - <<'PY'
+          from PIL import Image, ImageDraw
+          from reportlab.pdfgen import canvas
+          from reportlab.lib.pagesizes import A4
+          import os, math
+
+          W, H = 13*256, 45*256
+          world = Image.new("RGB", (W,H), (22,31,25))
+
+          for x in range(13):
+              for y in range(45):
+                  p = f"tiles/{x}_{y}.png"
+                  if os.path.exists(p):
+                      world.paste(
+                          Image.open(p).convert("RGB"),
+                          (x*256,y*256)
+                      )
+
+          os.makedirs("output",exist_ok=True)
+          world.save("output/OSRS_full_world.png")
+
+          page_height = round(W*297/210)
+          pages = math.ceil(H/page_height)
+
+          preview = world.copy()
+          draw = ImageDraw.Draw(preview)
+
+          for i in range(1,pages):
+              y = i*page_height
+              draw.line((0,y,W,y),fill=(255,205,80),width=5)
+
+          for i in range(pages):
+              draw.text((20,min(i*page_height+20,H-30)),
+                        f"A4 PAGE {i+1:02d}",
+                        fill=(255,220,120))
+
+          preview.save("output/OSRS_A4_grid_preview.png")
+
+          pdf = canvas.Canvas(
+              "output/OSRS_A4_pages.pdf",
+              pagesize=A4
+          )
+
+          for i in range(pages):
+              crop = world.crop((
+                  0,
+                  i*page_height,
+                  W,
+                  min((i+1)*page_height,H)
+              ))
+
+              if crop.height < page_height:
+                  padded = Image.new("RGB",(W,page_height),(22,31,25))
+                  padded.paste(crop,(0,0))
+                  crop = padded
+
+              path = f"/tmp/page_{i}.jpg"
+              crop.save(path,quality=96)
+
+              pdf.drawImage(path,0,0,width=A4[0],height=A4[1])
+              pdf.showPage()
+
+          pdf.save()
+          print("Aantal A4-pagina's:",pages)
+          PY
+
+      - name: Upload atlas
+        uses: actions/upload-artifact@v4
+        with:
+          name: osrs-full-world-a4-grid
+          path: output/
+          retention-days: 7
