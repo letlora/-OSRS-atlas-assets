@@ -1,0 +1,66 @@
+name: Build high-resolution OSRS Lumbridge atlas source
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download original zoom 6 map tiles
+        run: |
+          python - <<'PY'
+          import urllib.request, os, concurrent.futures
+          os.makedirs("tiles", exist_ok=True)
+          positions = [(x,y) for x in range(64,78) for y in range(286,300)]
+          def get(pos):
+              x,y=pos
+              url=f"https://raw.githubusercontent.com/JoeGandy/RSMap/main/public/tiles/0/6/{x}/{y}.png"
+              path=f"tiles/{x}_{y}.png"
+              try:
+                  urllib.request.urlretrieve(url,path)
+                  return (x,y,"ok")
+              except Exception as e:
+                  return (x,y,str(e))
+          with concurrent.futures.ThreadPoolExecutor(max_workers=12) as ex:
+              results=list(ex.map(get,positions))
+          ok=[r for r in results if r[2]=="ok"]
+          missing=[r for r in results if r[2]!="ok"]
+          print(f"Downloaded {len(ok)} of {len(positions)} tiles")
+          print("Missing:",missing)
+          if not ok:
+              raise SystemExit("No zoom 6 tiles were downloaded")
+          PY
+      - name: Stitch native tiles without resampling
+        run: |
+          pip install pillow
+          python - <<'PY'
+          from PIL import Image
+          import os, json
+          x0,x1,y0,y1=64,77,286,299
+          out=Image.new("RGB",((x1-x0+1)*256,(y1-y0+1)*256),(24,32,28))
+          found=[]
+          missing=[]
+          for x in range(x0,x1+1):
+              for y in range(y0,y1+1):
+                  p=f"tiles/{x}_{y}.png"
+                  if os.path.exists(p):
+                      out.paste(Image.open(p).convert("RGB"),((x-x0)*256,(y-y0)*256))
+                      found.append([x,y])
+                  else:
+                      missing.append([x,y])
+          os.makedirs("output",exist_ok=True)
+          out.save("output/OSRS_Lumbridge_zoom6_native.png",compress_level=6)
+          with open("output/tile_manifest.json","w") as f:
+              json.dump({"zoom":6,"tile_size":256,"tile_range":{"x":[x0,x1],"y":[y0,y1]},"downloaded":found,"missing":missing,"native_pixel_dimensions":list(out.size)},f,indent=2)
+          print("Native mosaic:",out.size,"missing:",len(missing))
+          PY
+      - name: Upload high-resolution source
+        uses: actions/upload-artifact@v4
+        with:
+          name: osrs-lumbridge-zoom6-native
+          path: output/
+          retention-days: 14
