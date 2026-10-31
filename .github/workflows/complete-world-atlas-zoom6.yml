@@ -17,7 +17,7 @@ jobs:
           import urllib.request, os, time
           from concurrent.futures import ThreadPoolExecutor, as_completed
           os.makedirs("tiles", exist_ok=True)
-          positions=[(x,y) for x in range(104) for y in range(360)]
+          positions=[(x,y) for x in range(102) for y in range(356)]
           def get(pos):
               x,y=pos
               url=f"https://raw.githubusercontent.com/JoeGandy/RSMap/main/public/tiles/0/6/{x}/{y}.png"
@@ -55,12 +55,12 @@ jobs:
           from reportlab.lib.pagesizes import A4
           import os, math, json, zipfile
           os.makedirs("output/pages",exist_ok=True)
-          TILE=256; NX,NY=104,360
+          TILE=256; NX,NY=102,356
           WORLD_W,WORLD_H=NX*TILE,NY*TILE
           PAGE_W,PAGE_H=1064,1568
           COLS=math.ceil(WORLD_W/PAGE_W); ROWS=math.ceil(WORLD_H/PAGE_H)
           manifest={"source":"JoeGandy/RSMap OSRS cache-derived zoom 6 tiles","zoom":6,"tile_size":TILE,
-                    "world_tile_range":{"x":[0,103],"y":[0,359]},"native_world_pixels":[WORLD_W,WORLD_H],
+                    "world_tile_range":{"x":[0,101],"y":[0,355]},"native_world_pixels":[WORLD_W,WORLD_H],
                     "page_pixels":[PAGE_W,PAGE_H],"columns":COLS,"rows":ROWS,"page_count":COLS*ROWS,
                     "note":"Pages are cut without resampling; edge pages are padded."}
           with open("output/atlas_manifest.json","w") as f: json.dump(manifest,f,indent=2)
