@@ -1,0 +1,33 @@
+name: Download OSRS Lumbridge tiles
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download original OSRS map tiles
+        run: |
+          mkdir -p lumbridge-tiles
+
+          for x in $(seq 32 38); do
+            for y in $(seq 143 149); do
+              curl -fL \
+                "https://raw.githubusercontent.com/JoeGandy/RSMap/main/public/tiles/0/5/${x}/${y}.png" \
+                -o "lumbridge-tiles/${x}_${y}.png"
+            done
+          done
+
+      - name: Upload map tiles
+        uses: actions/upload-artifact@v4
+        with:
+          name: osrs-lumbridge-tiles
+          path: lumbridge-tiles/
+          retention-days: 7
